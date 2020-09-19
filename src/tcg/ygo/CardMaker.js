@@ -37,6 +37,40 @@ define(["react", "react-class", "./Card", "webfont", "./Checkbox"], function App
         layout: "Normal"
     }
 
+    const EL = (tag, data, ...children) => {
+        let result = document.createElement(tag);
+        if(data) {
+            Object.assign(result, data);
+        }
+        for(let child of children.map(EL.forceElement)) {
+            result.appendChild(child);
+        }
+        return result;
+    };
+    EL.text = document.createTextNode.bind(document);
+    EL.forceElement = (el) =>
+        typeof el === "string"
+            ? EL.text(el)
+            : el;
+    EL.removeClasses = (el) => {
+        let toRemove;
+        let didRemove = false;
+        while(toRemove = el.classList[0]) {
+            el.classList.remove(toRemove);
+            didRemove = true;
+        }
+        return didRemove;
+    };
+
+    const loadScript = function (url, cb) {
+        let scriptElement = document.createElement("script");
+        scriptElement.src = url;
+        if(cb) {
+            scriptElement.addEventListener("load", cb);
+        }
+        document.head.appendChild(scriptElement);
+    };
+
     var CardMakerApp = ReactClass({
 
         getInitialState: function initialState() {
@@ -209,6 +243,17 @@ define(["react", "react-class", "./Card", "webfont", "./Checkbox"], function App
                 return options;
             }
 
+            if(!window.renderOnResize) {
+                window.renderOnResize = true;
+                window.addEventListener("resize", () => {
+                    this.setState({ state: this.state });
+                    this.updateLayoutInputs();
+                });
+            }
+
+            let isMobile = screen.width <= 756;
+            console.log("Rendering, isMobile:", isMobile);
+
             var templates = makeSelect(Card.Layout);
             var attributes = makeSelect(Card.Attributes);
             var icons = makeSelect(Card.Icons);
@@ -248,9 +293,56 @@ define(["react", "react-class", "./Card", "webfont", "./Checkbox"], function App
                 this.state.card.pendulum.enabled = false;
             }
 
-            let e = React.createElement;
+            let e = (tag, obj = null, ...rest) => {
+                if(tag === "input" || tag === "textarea") {
+                    if(!obj) {
+                        obj = {};
+                    }
+                    let old;
+                    if(obj.onFocus) {
+                        old = obj.onFocus;
+                    }
+                    obj.onFocus = function (ev) {
+                        window.lastFocused = ev.target;
+                        if(old) {
+                            old();
+                        }
+                    };
+                }
+                return React.createElement(tag, obj, ...rest);
+            };
             let labelText = (text) => e("span", { className: "label-text" }, text);
 
+            // circumvent React's overwriting the value setter
+            // https://stackoverflow.com/a/46012210/4119004
+            let nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                window.HTMLInputElement.prototype, "value"
+            ).set;
+            let nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(
+                window.HTMLTextAreaElement.prototype, "value"
+            ).set;
+            let makeTextAdder = (text) =>
+                e("button", { onClick: function () {
+                    let target = lastFocused;
+                    if(target) {
+                        let update = nativeInputValueSetter;
+                        if(target.tagName === "TEXTAREA") {
+                            update = nativeTextAreaValueSetter;
+                        }
+                        update.call(target, lastFocused.value + text);
+                        target.dispatchEvent(new Event("input", { bubbles: true }));
+                    }
+                }}, text);
+            let primaryButtons = [
+                e("button", { onClick: this.create, className: "ipsButton ipsButton_primary"}, "New Card"),
+                e("button", { onClick: this.save, className: "ipsButton ipsButton_primary" }, "Save Card"),
+                e("button", { onClick: this.exportAsPrompt, className: "ipsButton ipsButton_primary" }, "Export As"),
+                e("button", { onClick: this.open, className: "ipsButton ipsButton_primary" }, "Load Card"),
+                e("button", { onClick: this.link1, className: "ipsButton ipsButton_primary gold", title: "YGOPRO is a free automatic Yu-Gi-Oh! online game. All cards are available and new cards are added as soon as they are announced. Click here to download YGOPRO." }, "YGOPRO"),
+                e("button", { onClick: this.link2, className: "ipsButton ipsButton_primary gold" }, "Discord"),
+            ];
+            let ptag = isMobile ? "div" : "tr";
+            let ctag = isMobile ? "div" : "td";
             let result = e(
                 "div",
                 {
@@ -259,50 +351,59 @@ define(["react", "react-class", "./Card", "webfont", "./Checkbox"], function App
                 e(
                     "div",
                     { className: "live-preview" },
+                    // reactCard,
                     e(Card, this.state.card),
 
-                    e("table", { className: "options" },
-                        e("tr", null,
-                            e("td", null, e("button", { onClick: this.create, className: "ipsButton ipsButton_primary"}, "New Card")),
-                            e("td", null, e("button", { onClick: this.save, className: "ipsButton ipsButton_primary" }, "Save Card")),
-                        ),
-                        e("tr", null,
-                            e("td", null, e("button", { onClick: this.exportAsPrompt, className: "ipsButton ipsButton_primary" }, "Export As")),
-                            e("td", null, e("button", { onClick: this.open, className: "ipsButton ipsButton_primary" }, "Load Card")),
+                    isMobile
+                        ? e("div", { className: "options" },
+                            ...primaryButtons
                         )
-                    )
+                        : e("table", { className: "options" },
+                            e("tr", null,
+                                e("td", null, primaryButtons[0]),
+                                e("td", null, primaryButtons[1]),
+                            ),
+                            e("tr", null,
+                                e("td", null, primaryButtons[2]),
+                                e("td", null, primaryButtons[3]),
+                            ),
+                            e("tr", null,
+                                e("td", null, primaryButtons[4]),
+                                e("td", null, primaryButtons[5]),
+                            )
+                        )
                 ),
                 e(
                     "div",
                     { className: "editor" },
 
-                    e("table", null, e("tbody", null,
-                        e("tr", null,
-                            e("td", null, e("label", null, labelText("Name"),  e("input", { onChange: this.updateField("card.name"), type: "text", value: this.state.card.name }))),
-                            e("td", null, e("label", null, labelText("Template"), e("select",  { onChange: this.updateField("card.layout"), value: this.state.card.layout }, templates))),
-                            e("td", null, e("label", null, labelText("Rarity"), e("select", { onChange: this.updateField("card.rarity"), value: this.state.card.rarity }, rarities)))
+                    e(isMobile ? "div" : "table", null, e(isMobile ? "div" : "table", null,
+                        e(ptag, null,
+                            e(ctag, null, e("label", null, labelText("Name"),  e("input", { onChange: this.updateField("card.name"), type: "text", value: this.state.card.name }))),
+                            e(ctag, null, e("label", null, labelText("Template"), e("select",  { onChange: this.updateField("card.layout"), value: this.state.card.layout }, templates))),
+                            e(ctag, null, e("label", null, labelText("Rarity"), e("select", { onChange: this.updateField("card.rarity"), value: this.state.card.rarity }, rarities)))
                         ),
-                        e("tr", null,
-                            e("td", null, e("label", null, labelText("Symbol"), e("select", { onChange: this.updateField("card.attribute"), value: this.state.card.attribute }, attributes))),
-                            e("td", { class: "filter not-if-anime" }, e("label", null, labelText("Type"),  e("input", { onChange: this.updateField("card.type"), type: "text", value: this.state.card.type }))),
-                            e("td", { class: "filter if-monster not-if-link" }, e("label", null, labelText(levelName), e("input", { onChange: this.updateField("card.level"), type: "number", value: this.state.card.level }))),
-                            e("td", { class: "filter if-backrow" }, e("label", null, labelText("Icon"), e("select", { onChange: this.updateField("card.icon"), value: this.state.card.icon }, icons)))
+                        e(ptag, null,
+                            e(ctag, null, e("label", null, labelText("Symbol"), e("select", { onChange: this.updateField("card.attribute"), value: this.state.card.attribute }, attributes))),
+                            e(ctag, { class: "filter not-if-anime" }, e("label", null, labelText("Type"),  e("input", { onChange: this.updateField("card.type"), type: "text", value: this.state.card.type }))),
+                            e(ctag, { class: "filter if-monster not-if-link" }, e("label", null, labelText(levelName), e("input", { onChange: this.updateField("card.level"), type: "number", value: this.state.card.level }))),
+                            e(ctag, { class: "filter if-backrow" }, e("label", null, labelText("Icon"), e("select", { onChange: this.updateField("card.icon"), value: this.state.card.icon }, icons)))
                         ),
-                        e("tr", null,
-                            e("td", null, e("label", null, labelText("Style Variant"), e("select", { disabled: this.styleVariants.length <= 1, onChange: this.updateField("card.variant"), value: this.state.card.variant }, this.styleVariants))),
-                            e("td", { class: "filter if-monster" }, e("label", null, labelText("Attack"), e("input", { onChange: this.updateField("card.atk"), type: "text", value: this.state.card.atk }))),
-                            e("td", { class: "filter if-monster" }, e("div", null,
+                        e(ptag, null,
+                            e(ctag, null, e("label", null, labelText("Style Variant"), e("select", { disabled: this.styleVariants.length <= 1, onChange: this.updateField("card.variant"), value: this.state.card.variant }, this.styleVariants))),
+                            e(ctag, { class: "filter if-monster" }, e("label", null, labelText("Attack"), e("input", { onChange: this.updateField("card.atk"), type: "text", value: this.state.card.atk }))),
+                            e(ctag, { class: "filter if-monster" }, e("div", null,
                                 e("label", { class: "filter not-if-link" }, labelText("Defense"), e("input", { onChange: this.updateField("card.def"), type: "text", value: this.state.card.def })),
                                 e("label", { class: "filter if-link" }, labelText("Link Rating"), e("input", { onChange: this.updateField("card.def"), type: "text", value: this.state.card.def }))
                             ))
                         ),
-                        e("tr", { class: "filter not-if-anime" },
-                            e("td", null, e("label", null, labelText("Set id"), e("input", { onChange: this.updateField("card.id"), type: "text", value: this.state.card.id }))),
-                            e("td", null, e("div", { id: "serial-container" },
+                        e(ptag, { class: "filter not-if-anime" },
+                            e(ctag, null, e("label", null, labelText("Set id"), e("input", { onChange: this.updateField("card.id"), type: "text", value: this.state.card.id }))),
+                            e(ctag, null, e("div", { id: "serial-container" },
                                 e("label", { id: "serial-number" }, labelText("Serial number"), e("input", { onChange: this.updateField("card.serial"), type: "text", value: this.state.card.serial })),
                                 e("button", { id: "serial-randomize", onClick: this.randomizeSerialNumber, className: "ipsButton ipsButton_primary" }, "Randomize"),
                             )),
-                            e("td", { class: "filter not-if-rush" }, e("label", null, labelText("Copyright"), e("input", { onChange: this.updateField("card.copyright"), type: "text", value: this.state.card.copyright }))),
+                            e(ctag, { class: "filter not-if-rush" }, e("label", null, labelText("Copyright"), e("input", { onChange: this.updateField("card.copyright"), type: "text", value: this.state.card.copyright }))),
                         )
                     )),
 
@@ -384,9 +485,18 @@ define(["react", "react-class", "./Card", "webfont", "./Checkbox"], function App
                         e("label", { class: "filter not-if-anime" }, labelText("Effect"), e("textarea", { onChange: this.updateField("card.pendulum.effect"), type: "text", value: this.state.card.pendulum.effect })),
                     ),
 
-                    e("pre", { "className": "special" }, "∞ ☆ ● © ™"),
+                    e("div", { "className": "special" },
+                        e("label", null, "Add Special Characters"),
+                        makeTextAdder("∞"),
+                        makeTextAdder("☆"),
+                        makeTextAdder("●"),
+                        makeTextAdder("©"),
+                        makeTextAdder("™"),
+                    ),
 
                     e("button", { onClick: this.credits }, "Credits"),
+
+                    e("button", { onClick: this.developer }, "Developer Features"),
                 ),
                 // popup
                 e("div", { id: "popup-area", class: "hidden", onClick: (e) => e.target === e.currentTarget && this.closePopup() },
@@ -402,35 +512,329 @@ define(["react", "react-class", "./Card", "webfont", "./Checkbox"], function App
 
             return result;
         },
+        link1: function link1() {
+            // ygopro link
+            window.open("https://ygopro.org/", "_blank");
+        },
+        link2: function link2() {
+            // ygopro discord link
+            window.open("https://ygopro.org/discord/", "_blank");
+        },
+        developer: function developer() {
+            let options = [
+                ["Process image database", "processDatabaseCreate"],
+                ["Log image data", "logImageData"]
+            ];
+            let body = EL("div");
+            for(let [tag, operation] of options) {
+                let button = EL("button");
+                button.appendChild(EL.text(tag));
+                button.addEventListener("click", () => {
+                    this[operation]();
+                });
+                body.appendChild(button);
+            }
+            this.popup("Developer Features", body);
+        },
+        logImageData: function logImageData() {
+            console.log(this.state.card);
+        },
+        processDatabaseCreate: function processDatabaseCreate(loaded = false) {
+            if(!loaded) {
+                return loadScript("https://cdnjs.cloudflare.com/ajax/libs/jszip/3.2.2/jszip.min.js",
+                    () => this.processDatabaseCreate(true)
+                );
+            }
+            let imageInput = EL("input", { type: "file", accept: ".zip" });
+            let cardDatabaseInput = EL("input", { type: "file", accept: ".json" });
+            let submit = EL("button", null, "Submit");
+            let body = EL("div", null,
+                "Image Repository (.zip):",
+                imageInput,
+                "Card Database (.json, Dueling Nexus format):",
+                cardDatabaseInput,
+                submit,
+            );
+            submit.addEventListener("click", () => {
+                JSZip.loadAsync(imageInput.files[0])
+                .then((zipFile) => {
+                    let reader = new FileReader();
+                    reader.readAsText(cardDatabaseInput.files[0], "UTF-8");
+                    reader.onload = (evt) => {
+                        let json = JSON.parse(evt.target.result);
+                        this.processDatabase(json, zipFile);
+                    };
+                });
+            });
+            this.popup("Process Database", body, "wide");
+        },
+        convertEntry: function (entry) {
+            // TODO: pendulums
+            let getStat = (stat) =>
+                stat === -2
+                    ? "?"
+                    : stat.toString();
+            let CardBorders = {
+                2: "Spell",
+                4: "Trap",
+                128: "Ritual",
+                64: "Fusion",
+                8192: "Synchro",
+                16384: "Token",
+                8388608: "Xyz",
+                67108864: "Link",
+                16: "Normal",
+                32: "Effect",
+            };
+            let MonsterTypes = {
+                1: "Warrior",
+                2: "Spellcaster",
+                4: "Fairy",
+                8: "Fiend",
+                16: "Zombie",
+                32: "Machine",
+                64: "Aqua",
+                128: "Pyro",
+                256: "Rock",
+                512: "Winged Beast",
+                1024: "Plant",
+                2048: "Insect",
+                4096: "Thunder",
+                8192: "Dragon",
+                16384: "Beast",
+                32768: "Beast-Warrior",
+                65536: "Dinosaur",
+                131072: "Fish",
+                262144: "Sea Serpent",
+                524288: "Reptile",
+                1048576: "Psychic",
+                2097152: "Divine-Beast",
+                4194304: "Creator God",
+                8388608: "Wyrm",
+                16777216: "Cyberse",
+            };
+            let MonsterAttributes = {
+                1: "Earth",
+                2: "Water",
+                4: "Fire",
+                8: "Wind",
+                16: "Light",
+                32: "Dark",
+                64: "Divine",
+            };
+            let SpellTrapIcons = {
+                128: "Ritual",
+                65536: "Quick-play",
+                131072: "Continuous",
+                262144: "Equip",
+                524288: "Field",
+                1048576: "Counter",
+            };
+            const LinkArrowMeanings = {
+                [0b000000001]: "bottomLeft",
+                [0b000000010]: "bottomCenter",
+                [0b000000100]: "bottomRight",
+                [0b000001000]: "middleLeft",
+                [0b000100000]: "middleRight",
+                [0b001000000]: "topLeft",
+                [0b010000000]: "topCenter",
+                [0b100000000]: "topRight",
+            };
+            const blankPendulum = {
+                enabled: false,
+                blue: "5",
+                red: "5",
+                effect: "",
+                boxSize: "Normal",
+            };
+
+            let result = {};
+
+            result.pendulum = blankPendulum;
+
+            result.name = entry.name;
+            result.effect = entry.description;
+            result.atk = getStat(entry.attack);
+            result.def = getStat(entry.defence);
+            result.level = entry.level.toString();
+            let border;
+            for(let [mask, resBorder] of Object.entries(CardBorders)) {
+                if(entry.type & mask) {
+                    border = resBorder;
+                    if(mask <= 4) {
+                        break;
+                    }
+                }
+            }
+            result.layout = border || result.layout;
+            result.serial = entry.id.toString();
+            if(entry.type & 1) {
+                // if it is a monster
+                let typeNames = [];
+                let monsterType = MonsterTypes[entry.race];
+                typeNames.push(monsterType);
+                if(entry.type & 2097152) {
+                    typeNames.push("Flip");
+                }
+                typeNames.push(result.layout);
+
+                if(entry.type & 16777216) {
+                    let [ pend, regular ] = result.effect
+                        .replace(/\[ \w+ Effect \]/g, "")
+                        .split(/-{4,}/)
+                        .map(e => e.trim());
+
+                    // console.log(regular, pend, result.effect);
+
+                    result.effect = regular;
+                    result.pendulum = {
+                        enabled: true,
+                        blue: entry.lscale.toString(),
+                        red: entry.rscale.toString(),
+                        effect: pend,
+                        boxSize: "Normal",
+                    };
+                    if(pend.length <= 150) {
+                        result.pendulum.boxSize = "Small";
+                    }
+                    typeNames.push("Pendulum");
+                }
+
+                if(result.layout !== "Effect" && result.layout !== "Normal") {
+                    typeNames.push("Effect");
+                }
+                result.type = typeNames.join("/");
+                result.attribute = MonsterAttributes[entry.attribute] || "None";
+
+                if(result.layout === "Link") {
+                    result.def = result.level;
+                    result.link = {};
+                    for(let i = 256; i >= 1; i >>= 1) {
+                        result.link[LinkArrowMeanings[i]] = !!(entry.defence & i);
+                    }
+                }
+            }
+            else {
+                result.attribute = result.layout;
+                result.type = result.layout + " Card";
+                result.icon = "None";
+                for(let [mask, resIcon] of Object.entries(SpellTrapIcons)) {
+                    if(entry.type & mask) {
+                        result.icon = resIcon;
+                        break;
+                    }
+                }
+            }
+            return result;
+        },
+        processDatabase: async function processDatabase(json, zipFile) {
+            let outZip = new JSZip();
+            let imageFiles = zipFile.file(/.*/);
+            let count = 0;
+            let total = imageFiles.length;
+            let isZooming = false;
+            for(let image of imageFiles) {
+                let newState = {};
+                // overhead parsing
+                let base = image.name.split(/[\/\\]/).pop().split(".");
+                let ext = base.pop();
+                base = base.join(".");
+                // get URL
+                let arr = await image.async("base64");
+                let type = "image/" + ext;
+                let url = "data:" + type + ";base64," + arr;
+                newState.image = url;
+                // get data
+                let entry = json[base];
+
+                Object.assign(newState, this.convertEntry(entry));
+                // update state
+                this.setState({ card: Object.assign({}, this.state.card, newState)});
+                let status = await new Promise((resolve, reject) => {
+                    count++;
+                    let next = EL("button", null, "Next");
+                    let pause = EL("button", null, "Pause");
+                    let finish = EL("button", null, "Finish Now");
+                    let zoomToggle = EL("button", null, isZooming ? "Unzoom" : "Zoom");
+
+                    let body = EL("div", null, next, pause, finish, zoomToggle, EL("div", null, count + "/" + total));
+
+                    let popupBody = () => {
+                        this.popup("Ready?", body);
+                        if(isZooming) {
+                            setTimeout(resolve, 400, true);
+                        }
+                    }
+
+                    next.addEventListener("click", function () {
+                        resolve(true);
+                    });
+                    finish.addEventListener("click", function () {
+                        resolve(false);
+                    });
+                    zoomToggle.addEventListener("click", function () {
+                        isZooming = !isZooming;
+                        resolve(true);
+                    });
+                    pause.addEventListener("click", function () {
+                        let resume = EL("button", null, "Resume Processing");
+                        let parent = document.getElementsByClassName("editor")[0];
+                        parent.appendChild(resume);
+                        this.closePopup();
+                        resume.addEventListener("click", function () {
+                            parent.removeChild(resume);
+                            popupBody();
+                        });
+                    });
+                    popupBody();
+                });
+                let toExport = this.getDataURL("JPG");
+                toExport = toExport.replace(/data:.*?;base64,/, "");
+
+                outZip.file(base + ".jpg", toExport, { base64: true });
+                this.closePopup();
+                if(!status) {
+                    break;
+                }
+            }
+            this.popup("Zip File Generating", "Please wait, zip generating.");
+            outZip.generateAsync({ type: "blob" }).then(blob => {
+                let filename = "cardImages.zip";
+                if (window.navigator.msSaveOrOpenBlob) // IE10+
+                    window.navigator.msSaveOrOpenBlob(blob, filename);
+                else { // Others
+                    var a = document.createElement("a"),
+                            url = URL.createObjectURL(blob);
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    setTimeout(() => {
+                        document.body.removeChild(a);
+                        window.URL.revokeObjectURL(url);
+                        this.popup("Zip File Generated", "Please accept the file download");
+                    }, 0);
+                }
+            });
+
+        },
         credits: function credits() {
             let body = document.createElement("div");
             let toParse = [
                 ["Commissioned by:", "Seto Kaiba", "https://github.com/realSetoKaiba"],
                 ["Programmed by:", "Sock#3222", "https://github.com/LimitlessSocks"],
-                ["Management lead:", "Soaring__Sky#3222", "https://github.com/SoaringSky"],
+                ["Management lead:", "Soaring__Sky#1313", "https://github.com/SoaringSky"],
                 ["Rush Duel Templates by:", "alixsep", "https://www.deviantart.com/alixsep"],
                 ["Derived from:", "Yemachu Cardmaker", "https://github.com/Yemachu/cardmaker"],
             ];
             for(let [intro, name, href] of toParse) {
-                let a = document.createElement("a");
-                a.href = href;
-                a.target = "_blank";
-                a.appendChild(document.createTextNode(name));
-                let p = document.createElement("p");
-                p.appendChild(document.createTextNode(intro + " "));
-                p.appendChild(a);
-                body.appendChild(p);
+                let linkBody = EL("p", null,
+                    intro,
+                    " ",
+                    EL("a", { href: href, target: "_blank" }, name)
+                );
+                body.appendChild(linkBody);
             }
-            // body.appendChild(document.createTextNode(
-                // "This application was commisioned by Seto Kaiba, developer of YGOPRO TDOANE. The applciation was programmed by Sock#3222. The development cycle was headed by Soaring__Sky#1313. If you have any questions or feedback, check out the "
-            // ));
-            // let a = document.createElement("a");
-            // a.appendChild(
-            //     document.createTextNode("GitHub Repository")
-            // );
-            // a.target = "_blank";
-            // a.href = "https://github.com/LimitlessSocks/TDOANE-CardMaker";
-            // body.appendChild(a);
             this.popup("Credits", body);
         },
         create: function create()
@@ -455,7 +859,9 @@ define(["react", "react-class", "./Card", "webfont", "./Checkbox"], function App
             }
         },
 
-        popup: function (title, body) {
+        // available styles: "default", "wide"
+        popup: function (title, body, style="default") {
+            body = EL.forceElement(body);
             let clearChildren = function (...nodes) {
                 for(let node of nodes) {
                     while(node.firstChild) {
@@ -463,8 +869,11 @@ define(["react", "react-class", "./Card", "webfont", "./Checkbox"], function App
                     }
                 }
             };
+            let popup = document.getElementById("popup-content");
+            EL.removeClasses(popup);
+            popup.classList.add(style);
+
             let popupArea = document.getElementById("popup-area");
-            // let popup = document.getElementById("popup-content");
             let header = document.getElementById("popup-header");
             let text = document.getElementById("popup-text");
             clearChildren(header, text);
@@ -478,41 +887,47 @@ define(["react", "react-class", "./Card", "webfont", "./Checkbox"], function App
             popupArea.classList.add("hidden");
         },
 
+        getDataURL: function getDataURL(ext = "PNG") {
+            let canvas = document.getElementsByTagName("canvas")[0];
+            let dataURL;
+            switch(ext) {
+                case "PNG":
+                    dataURL = canvas.toDataURL();
+                    break;
+                case "JPGHIGH":
+                    dataURL = canvas.toDataURL("image/jpeg", 1.0);
+                    break;
+                case "JPG":
+                    dataURL = canvas.toDataURL("image/jpeg");
+                    break;
+                case "JPGLOW":
+                    dataURL = canvas.toDataURL("image/jpeg", 0.5);
+                    break;
+            }
+            return dataURL;
+        },
+
         exportAs: function (ext) {
             return (ev) => {
-                let canvas = document.getElementsByTagName("canvas")[0];
-                let dataURL;
-                switch(ext) {
-                    case "PNG":
-                        dataURL = canvas.toDataURL();
-                        break;
-                    case "JPGHIGH":
-                        dataURL = canvas.toDataURL("image/jpeg", 1.0);
-                        break;
-                    case "JPG":
-                        dataURL = canvas.toDataURL("image/jpeg");
-                        break;
-                    case "JPGLOW":
-                        dataURL = canvas.toDataURL("image/jpeg", 0.5);
-                        break;
+                let dataURL = this.getDataURL(ext);
+                if(!dataURL) {
+                    return;
                 }
-                if(dataURL) {
-                    let img = document.createElement("img");
-                    img.className = "img-result";
-                    img.src = dataURL;
-                    img.width = "250";
-                    img.addEventListener("click", function () {
-                        window.open(dataURL, "_blank");
-                    });
-                    let divHolder = document.createElement("div");
-                    divHolder.appendChild(img);
-                    let message2 = document.createElement("div");
-                    message2.appendChild(
-                        document.createTextNode("Click or tap the picture to download!")
-                    );
-                    divHolder.appendChild(message2);
-                    this.popup("Result", divHolder);
-                }
+                let img = document.createElement("img");
+                img.className = "img-result";
+                img.src = dataURL;
+                img.width = "250";
+                img.addEventListener("click", function () {
+                    window.open(dataURL, "_blank");
+                });
+                let divHolder = document.createElement("div");
+                divHolder.appendChild(img);
+                let message2 = document.createElement("div");
+                message2.appendChild(
+                    document.createTextNode("Click or tap the picture to download!")
+                );
+                divHolder.appendChild(message2);
+                this.popup("Result", divHolder);
             };
         },
 
